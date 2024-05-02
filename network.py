@@ -3,7 +3,6 @@ from torch.distributions import MultivariateNormal
 from torch import nn
 import torch
 import torch.nn.functional as F
-import numpy as np
 
 class PolicyNetwork(nn.Module):
     def __init__(self, in_dim, out_dim):
