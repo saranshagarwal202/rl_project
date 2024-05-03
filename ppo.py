@@ -107,7 +107,7 @@ class PPO():
             states, actions, log_prob, rewards, T_lengths, mean_reward = self.collect_trajectories()
             iter += 1
             if iter % self.checkpoint_n == 0:
-                self.save_checkpoint(states, T_lengths)
+                self.save_checkpoint(states, rewards, T_lengths, t)
 
             t += T_lengths.sum()
 
@@ -149,7 +149,7 @@ class PPO():
             data = {}
             for i, l in enumerate(T_lengths):
                 data[(l+curr_t).item()] = rewards[i].sum().item()
-            f = open(f"data/{self.env.spec.id}/rewards/{curr_t}.json", 'w')
+            f = open(f"data/{self.env.spec.id}/rewards/{curr_t.item()}.json", 'w')
             f.write(json.dumps(data))
             f.close()
 
@@ -165,21 +165,34 @@ class PPO():
             torch.save(self.value.state_dict(),
                        f"data/{self.env.spec.id}/value.pt")
 
-    def save_checkpoint(self, states, T_lengths):
+    def save_checkpoint(self, states, rewards, T_lengths, curr_t):
         """Save trajectory after every n training steps to be used for reward function training."""
         t, i = 0, 0
         sampled_states = []
         while t < self.checkpoint_t_len:
-            sampled_states.append(states[t:t+T_lengths[i]].tolist())
+            # ensuring a minimum length of 50 for sub sampling when training reward function.
+            if T_lengths[i]>=50:
+                discounts = torch.zeros(
+                T_lengths[i], device=self.device).fill_(self.discount)
+                discount_power = torch.linspace(
+                    start=0, end=T_lengths[i],
+                    steps=T_lengths[i], dtype=torch.int32, device=self.device)
+                discounts = discounts**discount_power
+                gt = discounts*rewards[i]
+                sampled_states.append([states[t:t+T_lengths[i]].tolist(), gt.sum().item()])
             t += T_lengths[i]
             i += 1
 
-        f = open(f"data/{self.env.spec.id}/states_bank.json", 'a+')
-        sampled_states = json.dumps(sampled_states)
-        sampled_states = sampled_states[1:-1]+','
-        f.write(sampled_states)
-        f.close()
+        if len(sampled_states)>0:
+            try:
+                f = open(f"data/{self.env.spec.id}/states_bank/states_{curr_t.item()}.json", 'w')
+                
+            except FileNotFoundError:
+                os.mkdir(f"data/{self.env.spec.id}/states_bank")
+                f = open(f"data/{self.env.spec.id}/states_bank/states_{curr_t.item()}.json", 'w')
 
+            f.write(json.dumps(sampled_states))
+            f.close()
 
 if __name__ == "__main__":
 
