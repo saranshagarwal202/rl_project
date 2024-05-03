@@ -5,7 +5,7 @@ import torch.utils
 import torch.utils.data
 import numpy as np
 from tqdm import tqdm
-from json import loads
+from json import loads, dumps
 import os
 
 
@@ -26,7 +26,7 @@ class Network(nn.Module):
 
 
 class Data(torch.utils.data.Dataset):
-    def __init__(self, data_dir, n_models=5, T_len=50) -> None:
+    def __init__(self, env, n_models=5, T_len=50) -> None:
         """
         parameters:
             data_file: the location of json data file
@@ -36,6 +36,7 @@ class Data(torch.utils.data.Dataset):
         self.data = []
         self.T_len = T_len
         self.n_models = n_models
+        data_dir = f"data/{env}/states_bank"
         for file in os.listdir(data_dir):
             f = open(os.path.join(data_dir, file), 'r')
             self.data.extend(loads(f.read()))
@@ -89,33 +90,41 @@ class Data(torch.utils.data.Dataset):
 
 
 class Reward():
-    def __init__(self, state_dim, data_dir='', lr=1e-4, discount=0.99,
-                 n_iter=10000, batch_size=64, n_models=5, T_len=50, mode='train') -> None:
+    def __init__(self, state_dim, env, lr=1e-4,
+                 n_iter=10000, batch_size=64, 
+                 n_models=5, T_len=50, mode='train') -> None:
 
         self.lr = lr
-        self.discount = discount
         self.n_iter = n_iter
         self.n_models = n_models
         self.T_len = T_len
+        self.env = env
 
         # generate 5 reward networks
         self.device = 'gpu' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-        self.reward = []
+        self.reward_model = []
         self.optimizers = []
-        for i in range(n_models):
-            self.reward.append(Network(state_dim).to(self.device))
-            self.optimizers.append(torch.optim.Adam(self.reward[i].parameters(), lr=self.lr))
 
         if mode == 'train':
-            train_data = Data(data_dir, n_models=n_models, T_len=T_len)
+            for i in range(n_models):
+                self.reward_model.append(Network(state_dim).to(self.device))
+                self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr))
+            train_data = Data(env, n_models=n_models, T_len=T_len)
             self.train_dataloader = torch.utils.data.DataLoader(
                 train_data, batch_size=batch_size, shuffle=True)
             self.loss_fn = nn.BCEWithLogitsLoss()
+        else:
+            for i in range(n_models):
+                self.reward_model.append(Network(state_dim).to(self.device))
+
+            self.load()
 
     def learn(self):
 
+        history = []
+        pbar = tqdm(total=self.n_iter)
         for epochs in range(self.n_iter):
-            pbar = tqdm(total=len(self.train_dataloader), desc=f"Epoch: {epochs}/{self.n_iter}")
+            losses = [0 for i in range(self.n_models)]
             for X, Y in self.train_dataloader:
                 
                 # reshape X and Y
@@ -124,8 +133,7 @@ class Reward():
                 # preds = torch.zeros(Y.shape)
                 
                 # training 5 models one by one
-                losses = []
-                for i, model in enumerate(self.reward):
+                for i, model in enumerate(self.reward_model):
                     preds = torch.zeros((Y.shape[0], 1), device=self.device)
                     for j in range(self.T_len):
                         # Pass each of 50 states one by one through models
@@ -134,28 +142,49 @@ class Reward():
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
-                    losses.append(round(loss.item(), 3))
-                pbar.set_postfix_str(f"Loss: {losses}")
-                pbar.update()
+                    losses[i]+= loss.item()
+            losses = [round(lo/len(self.train_dataloader), 3) for lo in losses]
+            history.append(losses)
+            pbar.set_postfix_str(f"Loss: {losses}")
+            pbar.update()
+        
+        # saving history and reward models
+        self.save_checkpoint(history)
 
-                
+    def save_checkpoint(self, history):
+        try:
+            f = open(f"data/{self.env}/reward_network/history.json", 'w')
+        except FileNotFoundError:
+            os.makedirs(f"data/{self.env}/reward_network/")
+            f = open(f"data/{self.env}/reward_network/history.json", 'w')
 
+        f.write(dumps(history))
+        f.close()
+        
+        for i, model in enumerate(self.reward_model):
+            torch.save(model.state_dict(), f"data/{self.env}/reward_network/reward_model_{i}.pt")
 
-
+    def load(self):
+        for i, model in enumerate(self.reward_model):
+            model.load_state_dict(torch.load(f"data/{self.env}/reward_network/reward_model_{i}.pt"))
+    
+    def get_reward(self, X):
+        """X shape is (batch_size, n_models, state_space_dim)"""
+        rewards = []
+        for i, model in enumerate(self.reward_model):
+            rewards.append(model(X[:, i, :].squeeze().to(self.device)).detach().cpu())
+        
+        return sum(rewards)/len(rewards)
 
 
 
 if __name__ == "__main__":
-    # train_data = Data("data/Hopper-v4/states_bank")
-    # train_dataloader = torch.utils.data.DataLoader(
-    #     train_data, batch_size=64, shuffle=True)
 
-    # sample = next(iter(train_dataloader))
-    # print(sample)
-    # for X, Y in train_dataloader:
-    #     print(X)
-    #     print(Y)
-    reward = Reward(state_dim=11, data_dir="data/Hopper-v4/states_bank")
+    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=1)
     reward.learn()
-
+    for X, Y in reward.train_dataloader:
+        X = torch.reshape(X, (128, 5, 50, 11))[:, :, 0, :].squeeze()
+        break
+    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10, mode='test')
+    reward.get_reward(X)
     print("Done")
