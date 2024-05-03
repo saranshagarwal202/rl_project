@@ -66,7 +66,7 @@ class Data(torch.utils.data.Dataset):
         return self.indices.shape[1]
 
     def __getitem__(self, index):
-        X = torch.zeros(size=(2, self.n_models, self.T_len, self.state_dim))
+        X = torch.zeros(size=(2, self.T_len, self.n_models, self.state_dim))
         Y = torch.zeros((2, self.n_models))
         # these index slices represent training pairs for each of n_model (default 5) reward networks
         index_slice_1 = self.indices[0, index, :]
@@ -78,9 +78,9 @@ class Data(torch.utils.data.Dataset):
             # choosing random slice of 50 states
             idx1 = np.random.choice(len(T1[0])-self.T_len, 1)[0]
             idx2 = np.random.choice(len(T2[0])-self.T_len, 1)[0]
-            X[0, i, :, :] = torch.tensor(
+            X[0, :, i, :] = torch.tensor(
                 np.array(T1[0][idx1: idx1+self.T_len], dtype=np.float32))
-            X[1, i, :, :] = torch.tensor(
+            X[1, :, i, :] = torch.tensor(
                 np.array(T2[0][idx2: idx2+self.T_len], dtype=np.float32))
             # setting labels as logits, 1 representing trajectory with higher rewards
             Y[0, i] = T1[1] >= T2[1]
@@ -99,11 +99,13 @@ class Reward():
         self.n_models = n_models
         self.T_len = T_len
         self.env = env
+        self.batch_size = batch_size
 
         # generate 5 reward networks
         self.device = 'gpu' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
         self.reward_model = []
         self.optimizers = []
+        self.history = []
 
         if mode == 'train':
             for i in range(n_models):
@@ -113,6 +115,21 @@ class Reward():
             self.train_dataloader = torch.utils.data.DataLoader(
                 train_data, batch_size=batch_size, shuffle=True)
             self.loss_fn = nn.BCEWithLogitsLoss()
+
+        elif mode == "train_continue":
+            for i in range(n_models):
+                self.reward_model.append(Network(state_dim).to(self.device))
+                self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr))
+            train_data = Data(env, n_models=n_models, T_len=T_len)
+            self.train_dataloader = torch.utils.data.DataLoader(
+                train_data, batch_size=batch_size, shuffle=True, num_workers=os.cpu_count()-1, persistent_workers=True)
+            self.loss_fn = nn.BCEWithLogitsLoss()
+            self.load()
+            f = open(f"data/{self.env}/reward_network/history.json", 'r')
+            self.history = loads(f.read())
+            f.close()
+            self.n_iter -=len(self.history)
+
         else:
             for i in range(n_models):
                 self.reward_model.append(Network(state_dim).to(self.device))
@@ -121,35 +138,39 @@ class Reward():
 
     def learn(self):
 
-        history = []
+        self.history = []
         pbar = tqdm(total=self.n_iter)
         for epochs in range(self.n_iter):
             losses = [0 for i in range(self.n_models)]
             for X, Y in self.train_dataloader:
                 
                 # reshape X and Y
-                X = torch.reshape(X, (X.shape[0]*2, X.shape[2], X.shape[3], X.shape[4]))
+                curr_batch_size = X.shape[0]
+                X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
                 Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
                 # preds = torch.zeros(Y.shape)
                 
                 # training 5 models one by one
                 for i, model in enumerate(self.reward_model):
-                    preds = torch.zeros((Y.shape[0], 1), device=self.device)
-                    for j in range(self.T_len):
-                        # Pass each of 50 states one by one through models
-                        preds += model(X[:, i, j, :].squeeze().to(self.device))
-                    loss = self.loss_fn(preds.squeeze(), Y[:, i].to(self.device)) # add loss here
+                    # preds = torch.zeros((Y.shape[0], 1), device=self.device)
+                    preds = model(X[:, i, :].squeeze().to(self.device))
+                    preds = preds.reshape(curr_batch_size*2, self.T_len)
+                    preds = preds.sum(axis=1)
+
+                    loss = self.loss_fn(preds, Y[:, i].to(self.device)) # add loss here
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
                     losses[i]+= loss.item()
             losses = [round(lo/len(self.train_dataloader), 3) for lo in losses]
-            history.append(losses)
+            self.history.append(losses)
             pbar.set_postfix_str(f"Loss: {losses}")
             pbar.update()
+            if epochs%10==0:
+                self.save_checkpoint(self.history)
         
         # saving history and reward models
-        self.save_checkpoint(history)
+        self.save_checkpoint(self.history)
 
     def save_checkpoint(self, history):
         try:
@@ -172,7 +193,7 @@ class Reward():
         """X shape is (batch_size, n_models, state_space_dim)"""
         rewards = []
         for i, model in enumerate(self.reward_model):
-            rewards.append(model(X[:, i, :].squeeze().to(self.device)).detach().cpu())
+            rewards.append(model(X.squeeze().to(self.device)).detach().cpu())
         
         return sum(rewards)/len(rewards)
 
@@ -180,11 +201,11 @@ class Reward():
 
 if __name__ == "__main__":
 
-    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=1)
+    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10000, lr=1e-4, mode='train')
     reward.learn()
-    for X, Y in reward.train_dataloader:
-        X = torch.reshape(X, (128, 5, 50, 11))[:, :, 0, :].squeeze()
-        break
-    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10, mode='test')
-    reward.get_reward(X)
+    # for X, Y in reward.train_dataloader:
+    #     X = torch.reshape(X, (128, 5, 50, 11))[:, :, 0, :].squeeze()
+    #     break
+    # reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10, mode='test')
+    # reward.get_reward(X)
     print("Done")
