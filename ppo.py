@@ -106,8 +106,8 @@ class PPO():
         while t < self.total_timesteps:
             states, actions, log_prob, rewards, T_lengths, mean_reward = self.collect_trajectories()
             iter += 1
-            if iter % self.checkpoint_n == 0:
-                self.save_checkpoint(states, rewards, T_lengths, t)
+            # if iter % self.checkpoint_n == 0:
+            #     self.save_checkpoint(states, rewards, T_lengths, t)
 
             t += T_lengths.sum()
 
@@ -141,6 +141,8 @@ class PPO():
                 f"Mean reward: {round(mean_reward, 3)}, Avg Episodic Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}, policy loss: {round(policy_loss.detach().item(), 3)}, value loss: {round(value_loss.detach().item(), 3)}")
             pbar.update(n=int(T_lengths.sum()))
             prev_mean_reward = mean_reward
+            if int(t*100/self.total_timesteps)%25==0:
+                self.save_stage(int(t*100/self.total_timesteps))
         pbar.close()
 
     def save_rewards(self, rewards, T_lengths, curr_t, curr_mean_r, prev_mean_r):
@@ -159,11 +161,16 @@ class PPO():
         # save state
 
         # save model
-        if curr_mean_r > prev_mean_r:
-            torch.save(self.policy.state_dict(),
-                       f"data/{self.env.spec.id}/policy.pt")
-            torch.save(self.value.state_dict(),
-                       f"data/{self.env.spec.id}/value.pt")
+        # if curr_mean_r > prev_mean_r:
+        #     torch.save(self.policy.state_dict(),
+        #                f"data/{self.env.spec.id}/policy.pt")
+        #     torch.save(self.value.state_dict(),
+        #                f"data/{self.env.spec.id}/value.pt")
+
+    def save_stage(self, i):
+        """save  model at every 50%, 75%,"""
+        torch.save(self.policy.state_dict(),
+                       f"data/{self.env.spec.id}/policy_{i}.pt")
 
     def save_checkpoint(self, states, rewards, T_lengths, curr_t):
         """Save trajectory after every n training steps to be used for reward function training."""
