@@ -174,9 +174,9 @@ if __name__ == "__main__":
     parser.add_argument("--env", default='Hopper-v4')
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--time-steps-per-batch", default=4096, type=int)
-    parser.add_argument("--time-steps-per-trajectory", default=1024, type=int)
+    parser.add_argument("--time-steps-per-trajectory", default=400, type=int)
     parser.add_argument("--discount", default=0.99)
-    parser.add_argument("--total-timesteps", default=1_000_000, type=int)
+    parser.add_argument("--total-timesteps", default=100_000, type=int)
     parser.add_argument("--learning-iterations", default=10, type=int)
     parser.add_argument("--lr", default=3e-4, type=float)
     parser.add_argument("--clip", default=0.2, type=str)
@@ -221,9 +221,7 @@ if __name__ == "__main__":
             "time_steps_per_batch": args.time_steps_per_batch,
             "time_steps_per_trajectory": args.time_steps_per_trajectory,
             "total_timesteps": args.total_timesteps,
-            "learning_iterations": args.learning_iterations,
-            "checkpoint_n": args.checkpoint_n,
-            "checkpoint_t_len": args.checkpoint_t_len
+            "learning_iterations": args.learning_iterations
         }
         agent = PPO(**kwargs)
         agent.policy.load_state_dict(torch.load(args.model_path))
@@ -234,6 +232,7 @@ if __name__ == "__main__":
         state = torch.from_numpy(state).float().unsqueeze(0)
         action = agent.policy(state)[0].detach().numpy()
         n_state, reward, terminated, truncated, _ = env.step(action)
+        print(reward)
         done = terminated or truncated
         state = n_state
         if done:
