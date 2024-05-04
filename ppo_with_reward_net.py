@@ -50,7 +50,7 @@ class PPO():
         states = []
         actions = []
         log_probabilities = []
-        rewards = []
+        rewards = [] # these are for metric purposes
         mean_rewards = []
         traj_length = []
         t = 0
@@ -59,13 +59,15 @@ class PPO():
             state, _ = self.env.reset()
             done = False
             ep_states = []
+            ep_rewards = []
             for episode_t in range(self.time_steps_per_trajectory):
                 ep_states.append(state)
 
                 act, log_prob = self.policy.get_action(
                     torch.tensor(state, dtype=torch.float32))
-                state, _, done, _, _ = self.env.step(act.numpy())
+                state, rew, done, _, _ = self.env.step(act.numpy())
 
+                ep_rewards.append(rew)
                 actions.append(act.detach().numpy())
                 log_probabilities.append(log_prob.detach().cpu().numpy())
                 t += 1
@@ -76,7 +78,7 @@ class PPO():
             states.extend(ep_states)
             traj_length.append(episode_t+1)
             rewards.append(self.reward_net.get_reward(torch.tensor(ep_states, dtype = torch.float32, device=self.acc_device)))
-            mean_rewards.append(rewards[-1].sum().item())
+            mean_rewards.append(sum(ep_rewards))
         return torch.tensor(np.array(states, dtype=np.float32), dtype=torch.float32), torch.tensor(np.array(actions)), torch.tensor(np.array(log_probabilities, dtype=np.float32)), rewards, torch.tensor(np.array(traj_length, dtype=np.int32)), sum(mean_rewards)/len(mean_rewards)
 
     def calculate_advantage(self, states, rewards: list):
@@ -138,7 +140,7 @@ class PPO():
                 self.value_optim.step()
             # print(f"Curr Mean Reward: {mean_reward}")
             pbar.set_postfix_str(
-                f"Mean reward: {round(mean_reward, 3)}, Avg Episodic Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}, policy loss: {round(policy_loss.detach().item(), 3)}, value loss: {round(value_loss.detach().item(), 3)}")
+                f"Mean reward: {round(mean_reward, 3)}, Avg Episodic Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}")
             pbar.update(n=int(T_lengths.sum()))
             prev_mean_reward = mean_reward
         pbar.close()

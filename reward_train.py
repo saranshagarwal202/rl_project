@@ -7,6 +7,8 @@ import numpy as np
 from tqdm import tqdm
 from json import loads, dumps
 import os
+import gymnasium as gym
+from network import PolicyNetwork
 
 
 class Network(nn.Module):
@@ -23,6 +25,31 @@ class Network(nn.Module):
 
     def forward(self, x):
         return self.seq(x)
+
+class Data_generator(torch.utils.data.Dataset):
+    def __init__(self, env, n_models=5, T_len=50, state_space=11) -> None:
+        super(Data_generator).__init__()
+
+        self.env = env
+        self.T_len = T_len
+        self.n_models = n_models
+        self.state_space = state_space
+        # initialize policy
+        self.policy = PolicyNetwork(state_space)
+        self.policy.load_state_dict(state_dict=torch.load(f"data/{env}/policy.pt"))
+    
+    def __len__(self):
+        return 1000
+
+    def __getitem__(self, index):
+        # initialize environment
+        
+        env = gym.make(self.env)
+        states = torch.zeros((self.T_len, env.observation_space.shape[0]))
+        state, _ = env.reset()
+        
+
+
 
 
 class Data(torch.utils.data.Dataset):
@@ -67,7 +94,7 @@ class Data(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         X = torch.zeros(size=(2, self.T_len, self.n_models, self.state_dim))
-        Y = torch.zeros((2, self.n_models))
+        Y = torch.zeros((self.n_models))
         # these index slices represent training pairs for each of n_model (default 5) reward networks
         index_slice_1 = self.indices[0, index, :]
         index_slice_2 = self.indices[1, index, :]
@@ -83,10 +110,29 @@ class Data(torch.utils.data.Dataset):
             X[1, :, i, :] = torch.tensor(
                 np.array(T2[0][idx2: idx2+self.T_len], dtype=np.float32))
             # setting labels as logits, 1 representing trajectory with higher rewards
-            Y[0, i] = T1[1] >= T2[1]
-            Y[1, i] = T2[1] > T1[1]
+            Y[i] = T2[1] > T1[1]
 
         return X, Y
+
+    def reset_index(self):
+        """reset indices"""
+        # creating index pairs on which each model will train
+        indices1 = np.random.choice(len(self.data), size=(
+            len(self.data), self.n_models), replace=True)
+        indices2 = np.random.choice(len(self.data), size=(
+            len(self.data), self.n_models), replace=True)
+
+        # check to insure same trajectory is not paired together
+        check = True
+        while check:
+            common_pairs = (indices1 == indices2).any(axis=1).nonzero()
+            for idx in common_pairs[0]:
+                indices1[idx, :] = np.random.choice(
+                    len(self.data), size=self.n_models)
+            check = (indices1 == indices2).any()
+
+        # indices shape = (2, len(data), 5)
+        self.indices = torch.tensor([indices1, indices2], dtype=torch.int32)
 
 
 class Reward():
@@ -110,19 +156,21 @@ class Reward():
         if mode == 'train':
             for i in range(n_models):
                 self.reward_model.append(Network(state_dim).to(self.device))
-                self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr))
-            train_data = Data(env, n_models=n_models, T_len=T_len)
+                self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr, weight_decay=0.01))
+            self.train_data = Data(env, n_models=n_models, T_len=T_len)
             self.train_dataloader = torch.utils.data.DataLoader(
-                train_data, batch_size=batch_size, shuffle=True)
+                self.train_data, batch_size=batch_size, shuffle=True)
             self.loss_fn = nn.BCEWithLogitsLoss()
 
         elif mode == "train_continue":
             for i in range(n_models):
                 self.reward_model.append(Network(state_dim).to(self.device))
                 self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr))
-            train_data = Data(env, n_models=n_models, T_len=T_len)
+            self.train_data = Data(env, n_models=n_models, T_len=T_len)
             self.train_dataloader = torch.utils.data.DataLoader(
-                train_data, batch_size=batch_size, shuffle=True, num_workers=os.cpu_count()-1, persistent_workers=True)
+                self.train_data, batch_size=batch_size, shuffle=True, 
+                num_workers=os.cpu_count()-1, persistent_workers=True,
+                prefetch_factor=7)
             self.loss_fn = nn.BCEWithLogitsLoss()
             self.load()
             f = open(f"data/{self.env}/reward_network/history.json", 'r')
@@ -147,17 +195,21 @@ class Reward():
                 # reshape X and Y
                 curr_batch_size = X.shape[0]
                 X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
-                Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
+                # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
                 # preds = torch.zeros(Y.shape)
                 
                 # training 5 models one by one
                 for i, model in enumerate(self.reward_model):
                     # preds = torch.zeros((Y.shape[0], 1), device=self.device)
                     preds = model(X[:, i, :].squeeze().to(self.device))
-                    preds = preds.reshape(curr_batch_size*2, self.T_len)
-                    preds = preds.sum(axis=1)
+                    preds = preds.reshape(curr_batch_size, 2, self.T_len)
+                    preds = preds.sum(axis=2)
 
-                    loss = self.loss_fn(preds, Y[:, i].to(self.device)) # add loss here
+                    # loss = self.loss_fn(preds, Y[:, i].to(self.device)) # add loss here
+                    y = Y[:, i].to(self.device, dtype=torch.int32)
+                    Tj = torch.exp(preds[torch.arange(preds.shape[0]), y])
+                    Ti = torch.exp(preds[torch.arange(preds.shape[0]), 1-y])
+                    loss = -(torch.log(Tj/(Tj+Ti)).sum())
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
@@ -168,6 +220,8 @@ class Reward():
             pbar.update()
             if epochs%10==0:
                 self.save_checkpoint(self.history)
+            
+            # self.train_data.reset_index()
         
         # saving history and reward models
         self.save_checkpoint(self.history)
@@ -203,9 +257,4 @@ if __name__ == "__main__":
 
     reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10000, lr=1e-4, mode='train')
     reward.learn()
-    # for X, Y in reward.train_dataloader:
-    #     X = torch.reshape(X, (128, 5, 50, 11))[:, :, 0, :].squeeze()
-    #     break
-    # reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10, mode='test')
-    # reward.get_reward(X)
     print("Done")
