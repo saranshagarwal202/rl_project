@@ -172,14 +172,14 @@ class PPO():
         while t < self.checkpoint_t_len:
             # ensuring a minimum length of 50 for sub sampling when training reward function.
             if T_lengths[i]>=50:
-                discounts = torch.zeros(
-                T_lengths[i], device=self.device).fill_(self.discount)
-                discount_power = torch.linspace(
-                    start=0, end=T_lengths[i],
-                    steps=T_lengths[i], dtype=torch.int32, device=self.device)
-                discounts = discounts**discount_power
-                gt = discounts*rewards[i]
-                sampled_states.append([states[t:t+T_lengths[i]].tolist(), gt.sum().item()])
+                # discounts = torch.zeros(
+                # T_lengths[i], device=self.device).fill_(self.discount)
+                # discount_power = torch.linspace(
+                #     start=0, end=T_lengths[i],
+                #     steps=T_lengths[i], dtype=torch.int32, device=self.device)
+                # discounts = discounts**discount_power
+                # gt = discounts*rewards[i]
+                sampled_states.append([states[t:t+T_lengths[i]].tolist(), rewards[i].sum().item()])
             t += T_lengths[i]
             i += 1
 
