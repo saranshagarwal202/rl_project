@@ -106,8 +106,8 @@ class PPO():
         while t < self.total_timesteps:
             states, actions, log_prob, rewards, T_lengths, mean_reward = self.collect_trajectories()
             iter += 1
-            # if iter % self.checkpoint_n == 0:
-            #     self.save_checkpoint(states, rewards, T_lengths, t)
+            if iter % self.checkpoint_n == 0:
+                self.save_checkpoint(states, rewards, T_lengths, t)
 
             t += T_lengths.sum()
 
@@ -245,7 +245,7 @@ if __name__ == "__main__":
         agent = PPO(**kwargs)
         agent.learn()
 
-        agent.policy.load_state_dict(torch.load(f"data/{args.env}/policy.pt"))
+        agent.policy.load_state_dict(torch.load(f"data/{args.env}/policy_100.pt"))
     else:
         env = gym.make(args.env, render_mode="human")
         kwargs = {
