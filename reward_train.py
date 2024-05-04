@@ -286,6 +286,7 @@ class Reward():
 
                     # loss = self.loss_fn(preds, Y[:, i].to(self.device)) # add loss here
                     y = Y[:, i].to(self.device, dtype=torch.int32)
+                    # try changing y and 1-y?
                     Tj = torch.exp(preds[torch.arange(preds.shape[0]), y])+1e-10
                     Ti = torch.exp(preds[torch.arange(preds.shape[0]), 1-y])+1e-10
                     loss = -(torch.log(Tj/(Tj+Ti)).sum())
@@ -327,7 +328,9 @@ class Reward():
     def load(self):
         for i, model in enumerate(self.reward_model):
             model.load_state_dict(torch.load(f"data/{self.env}/reward_network/reward_model_{i}.pt"))
-        self.reward_model_std_params = loads(f"data/{self.env}/reward_network/reward_model_std_params.json")
+        f = open(f"data/{self.env}/reward_network/reward_model_std_params.json", 'r')
+        self.reward_model_std_params = loads(f.read())
+        f.close()
     
     def get_reward(self, X):
         """X shape is (batch_size, n_models, state_space_dim)"""
@@ -335,8 +338,8 @@ class Reward():
         for i, model in enumerate(self.reward_model):
             rew = model(X.squeeze().to(self.device)).detach().cpu()
             # standardizing reward
-            (rew-self.reward_model_std_params[f"reward_model_{i}"]['min'])/(self.reward_model_std_params[f"reward_model_{i}"]['max']-self.reward_model_std_params[f"reward_model_{i}"]['min'])
-        
+            rew = (rew-self.reward_model_std_params[f"reward_model_{i}"]['min'])/(self.reward_model_std_params[f"reward_model_{i}"]['max']-self.reward_model_std_params[f"reward_model_{i}"]['min'])
+            rewards.append(rew)
         return sum(rewards)/len(rewards)
 
 
