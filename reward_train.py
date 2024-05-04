@@ -207,8 +207,8 @@ class Reward():
 
                     # loss = self.loss_fn(preds, Y[:, i].to(self.device)) # add loss here
                     y = Y[:, i].to(self.device, dtype=torch.int32)
-                    Tj = torch.exp(preds[torch.arange(preds.shape[0]), y])
-                    Ti = torch.exp(preds[torch.arange(preds.shape[0]), 1-y])
+                    Tj = torch.exp(preds[torch.arange(preds.shape[0]), y])+1e-10
+                    Ti = torch.exp(preds[torch.arange(preds.shape[0]), 1-y])+1e-10
                     loss = -(torch.log(Tj/(Tj+Ti)).sum())
                     self.optimizers[i].zero_grad()
                     loss.backward()
