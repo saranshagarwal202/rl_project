@@ -15,16 +15,36 @@ class Network(nn.Module):
     def __init__(self, in_dim) -> None:
         super(Network, self).__init__()
 
-        self.seq = nn.Sequential(
-            nn.Linear(in_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
-        )
+        self.l1 = nn.Linear(in_dim, 256)
+        self.a1 = nn.ReLU()
+        self.l2 = nn.Linear(256, 256)
+        self.a2 = nn.ReLU()
+        self.drop1 = nn.Dropout(0.2)
+        self.l3 = nn.Linear(256, 256)
+        self.a3 = nn.ReLU()
+        self.drop2 = nn.Dropout(0.2)
+        self.l4 = nn.Linear(256, 1)
+        
+
+        # self.seq = nn.Sequential(
+        #     nn.Linear(in_dim, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, 256),
+        #     nn.ReLU(),
+        #     nn.Linear(256, 1)
+        # )
 
     def forward(self, x):
-        return self.seq(x)
+        x = self.l1(x)
+        x = self.a1(x)
+        x = self.l2(x)
+        x = self.a2(x)
+        x = self.drop1(x)
+        x = self.l3(x)
+        x = self.drop2(x)
+        x = self.a3(x)
+        x= self.l4(x)
+        return x
 
 class Data_generator(torch.utils.data.Dataset):
     def __init__(self, env, stage=100, n_models=5, T_len=50, total_T=int(24000/50)) -> None:
@@ -109,7 +129,7 @@ class Data_generator(torch.utils.data.Dataset):
         return X, Y
 
 class Data(torch.utils.data.Dataset):
-    def __init__(self, env, stage=3, n_models=5, T_len=50) -> None:
+    def __init__(self, env, stage=3, data_ratio=0.8, data_type='train', test_indices=[], n_models=5, T_len=50) -> None:
         """
         parameters:
             data_file: the location of json data file
@@ -133,6 +153,16 @@ class Data(torch.utils.data.Dataset):
             self.data = self.data[:items]
         # sorting data to rank from worst to best
         self.data.sort(key=lambda x: x[1])
+
+        if data_type=='train':
+            indices = np.random.choice(len(self.data), len(self.data), replace=False)
+            self.train_indices = indices[:int(len(self.data)*data_ratio)]
+            self.test_indices = indices[int(len(self.data)*data_ratio):]
+            self.data = [self.data[i] for i in self.train_indices]
+        else:
+            self.data = [self.data[i] for i in test_indices]
+
+
         rews = [d[1] for d in self.data]
         print(f"PPO mean reward: {np.mean(rews)}")
         print(f"PPO max reward: {np.max(rews)}")
@@ -161,7 +191,6 @@ class Data(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         X = torch.zeros(size=(2, self.T_len, self.n_models, self.state_dim))
-        Y = torch.zeros((self.n_models))
         # these index slices represent training pairs for each of n_model (default 5) reward networks
         index_slice_1 = self.indices[0, index, :]
         index_slice_2 = self.indices[1, index, :]
@@ -170,17 +199,23 @@ class Data(torch.utils.data.Dataset):
             T2 = self.data[index_slice_2[i]]
 
             # choosing random slice of 50 states
-            idx1 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
-            idx2 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
-            X[0, :, i, :] = torch.tensor(
-                np.array(T1[0][idx1: idx1+self.T_len], dtype=np.float32))
-            X[1, :, i, :] = torch.tensor(
-                np.array(T2[0][idx2: idx2+self.T_len], dtype=np.float32))
-            # setting labels as logits, 1 representing trajectory with higher rewards
-            Y[i] = T2[1] > T1[1]
-            # with 0.1 probability flip the labels
+            # 0th index is traj with greater reward always
+            if T1[1]>T2[1]:
+                idx1 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
+                idx2 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
+                X[0, :, i, :] = torch.tensor(
+                    np.array(T1[0][idx1: idx1+self.T_len], dtype=np.float32))
+                X[1, :, i, :] = torch.tensor(
+                    np.array(T2[0][idx2: idx2+self.T_len], dtype=np.float32))
+            else:
+                idx1 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
+                idx2 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
+                X[0, :, i, :] = torch.tensor(
+                    np.array(T2[0][idx1: idx1+self.T_len], dtype=np.float32))
+                X[1, :, i, :] = torch.tensor(
+                    np.array(T1[0][idx2: idx2+self.T_len], dtype=np.float32))
 
-        return X, Y
+        return X
 
     def reset_index(self):
         """reset indices"""
@@ -226,11 +261,18 @@ class Reward():
             for i in range(n_models):
                 self.reward_model.append(Network(state_dim).to(self.device))
                 self.reward_model_std_params[f"reward_model_{i}"] = {'min': 0, 'max': 0}
-                self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr, weight_decay=0.01))
-
+                self.optimizers.append(torch.optim.Adam(self.reward_model[i].parameters(), lr=self.lr))
+            # train data
             self.train_data = Data(env, stage=stage, n_models=n_models, T_len=T_len)
             self.train_dataloader = torch.utils.data.DataLoader(
                 self.train_data, batch_size=batch_size, shuffle=True)
+            
+            # test data
+            self.test_data = Data(env, stage=stage, data_ratio=0.2, data_type='test', test_indices=self.train_data.test_indices, n_models=n_models, T_len=T_len)
+            self.test_dataloader = torch.utils.data.DataLoader(
+                self.test_data, batch_size=batch_size, shuffle=True)
+            
+
             self.loss_fn = nn.BCEWithLogitsLoss()
 
         elif mode == "train_continue":
@@ -261,50 +303,102 @@ class Reward():
         self.prev_losses = [10000 for i in range(self.n_models)]
         pbar = tqdm(total=self.n_iter)
         for epochs in range(self.n_iter):
-            losses = [0 for i in range(self.n_models)]
-            for X, Y in self.train_dataloader:
+            train_losses = [0 for i in range(self.n_models)]
+            test_losses = [0 for i in range(self.n_models)]
+            for X in self.train_dataloader:
 
                 # flipping Y with prob 0.1
-                random_tensor = torch.rand(Y.size())
-                mask = random_tensor < 0.1
-                Y = torch.where(mask, 1 - Y, Y)
+                # random_tensor = torch.rand(Y.size())
+                # mask = random_tensor < 0.01
+                # Y = torch.where(mask, 1 - Y, Y)
                 
                 # reshape X and Y
                 curr_batch_size = X.shape[0]
+
                 X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
                 # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
                 # preds = torch.zeros(Y.shape)
                 
                 # training 5 models one by one
                 for i, model in enumerate(self.reward_model):
+                    model.train()
                     # preds = torch.zeros((Y.shape[0], 1), device=self.device)
                     preds = model(X[:, i, :].squeeze().to(self.device))
                     self.reward_model_std_params[f'reward_model_{i}']['min'] = min(self.reward_model_std_params[f'reward_model_{i}']['min'], preds.min().item())
                     self.reward_model_std_params[f'reward_model_{i}']['max'] = max(self.reward_model_std_params[f'reward_model_{i}']['max'], preds.max().item())
                     preds = preds.reshape(curr_batch_size, 2, self.T_len)
-                    preds = preds.sum(axis=2)
+                    preds = preds.mean(axis=2)
 
-                    # loss = self.loss_fn(preds, Y[:, i].to(self.device)) # add loss here
-                    y = Y[:, i].to(self.device, dtype=torch.int32)
-                    # try changing y and 1-y?
-                    Tj = torch.exp(preds[torch.arange(preds.shape[0]), y])+1e-10
-                    Ti = torch.exp(preds[torch.arange(preds.shape[0]), 1-y])+1e-10
-                    loss = -(torch.log(Tj/(Tj+Ti)).sum())
+                    # preds = preds.sum(axis=1)
+                    # y = torch.zeros((preds.shape[0], 2))
+                    # y[:, 0] = Y[:,i]
+                    # y[:, 1] = 1-Y[:,i]
+                    # y = y.reshape_as(preds)
+                    # loss = self.loss_fn(preds, y.to(self.device)) # add loss here
+                    # To do: recheck loss calculation formula
+                    # y = Y[:, i].to(self.device, dtype=torch.int32)
+                    Tj = torch.exp(preds[:, 0]) # higher reward
+                    Ti = torch.exp(preds[:, 1]) # lower reward
+                    # check to see loss does not go nan
+                    loss = -(torch.log(Tj/(Tj+Ti)).mean())
+                    l2_reg = 0.001*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
+                    loss = loss+l2_reg
                     self.optimizers[i].zero_grad()
                     loss.backward()
                     self.optimizers[i].step()
-                    losses[i]+= loss.item()
-            losses = [round(lo/len(self.train_dataloader), 3) for lo in losses]
-            self.history.append(losses)
-            pbar.set_postfix_str(f"Loss: {losses}")
+                    train_losses[i]+= loss.item()
+            
+            for X in self.test_dataloader:
+
+                # flipping Y with prob 0.1
+                # random_tensor = torch.rand(Y.size())
+                # mask = random_tensor < 0.01
+                # Y = torch.where(mask, 1 - Y, Y)
+                
+                # reshape X and Y
+                curr_batch_size = X.shape[0]
+
+                X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
+                # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
+                # preds = torch.zeros(Y.shape)
+                
+                # training 5 models one by one
+                for i, model in enumerate(self.reward_model):
+                    model.eval()
+                    # preds = torch.zeros((Y.shape[0], 1), device=self.device)
+                    preds = model(X[:, i, :].squeeze().to(self.device))
+                    self.reward_model_std_params[f'reward_model_{i}']['min'] = min(self.reward_model_std_params[f'reward_model_{i}']['min'], preds.min().item())
+                    self.reward_model_std_params[f'reward_model_{i}']['max'] = max(self.reward_model_std_params[f'reward_model_{i}']['max'], preds.max().item())
+                    preds = preds.reshape(curr_batch_size, 2, self.T_len)
+                    preds = preds.mean(axis=2)
+
+                    # preds = preds.sum(axis=1)
+                    # y = torch.zeros((preds.shape[0], 2))
+                    # y[:, 0] = Y[:,i]
+                    # y[:, 1] = 1-Y[:,i]
+                    # y = y.reshape_as(preds)
+                    # loss = self.loss_fn(preds, y.to(self.device)) # add loss here
+                    # To do: recheck loss calculation formula
+                    # y = Y[:, i].to(self.device, dtype=torch.int32)
+                    Tj = torch.exp(preds[:, 0]) # higher reward
+                    Ti = torch.exp(preds[:, 1]) # lower reward
+                    # check to see loss does not go nan
+                    loss = -(torch.log(Tj/(Tj+Ti)).mean())
+                    test_losses[i]+= loss.item()
+
+
+            train_losses = [round(lo/len(self.train_dataloader), 2) for lo in train_losses]
+            test_losses = [round(lo/len(self.test_dataloader), 2) for lo in test_losses]
+            self.history.append((train_losses, test_losses))
+            pbar.set_postfix_str(f"train: {train_losses}, test: {test_losses}") 
             pbar.update()
             if epochs%10==0:
-                self.save_checkpoint(losses)
+                self.save_checkpoint(test_losses)
             
             # self.train_data.reset_index()
         pbar.close()
         # saving history and reward models
-        self.save_checkpoint(self.history)
+        self.save_checkpoint(test_losses)
 
     def save_checkpoint(self, losses):
         try:
@@ -336,9 +430,10 @@ class Reward():
         """X shape is (batch_size, n_models, state_space_dim)"""
         rewards = []
         for i, model in enumerate(self.reward_model):
-            rew = model(X.squeeze().to(self.device)).detach().cpu()
+            model.eval()
+            rew = F.sigmoid(model(X.squeeze().to(self.device))).detach().cpu()
             # standardizing reward
-            rew = (rew-self.reward_model_std_params[f"reward_model_{i}"]['min'])/(self.reward_model_std_params[f"reward_model_{i}"]['max']-self.reward_model_std_params[f"reward_model_{i}"]['min'])
+            # rew = (rew-self.reward_model_std_params[f"reward_model_{i}"]['min'])/(self.reward_model_std_params[f"reward_model_{i}"]['max']-self.reward_model_std_params[f"reward_model_{i}"]['min'])
             rewards.append(rew)
         return sum(rewards)/len(rewards)
 
@@ -346,6 +441,6 @@ class Reward():
 
 if __name__ == "__main__":
 
-    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=10000, lr=1e-4, stage=1, mode='train')
+    reward = Reward(state_dim=11, env="Hopper-v4", n_iter=3000, lr=1e-4, stage=1, mode='train')
     reward.learn()
     print("Done")

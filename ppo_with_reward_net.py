@@ -176,7 +176,7 @@ if __name__ == "__main__":
     parser.add_argument("--time-steps-per-batch", default=4096, type=int)
     parser.add_argument("--time-steps-per-trajectory", default=400, type=int)
     parser.add_argument("--discount", default=0.99)
-    parser.add_argument("--total-timesteps", default=100_000, type=int)
+    parser.add_argument("--total-timesteps", default=600_000, type=int)
     parser.add_argument("--learning-iterations", default=10, type=int)
     parser.add_argument("--lr", default=3e-4, type=float)
     parser.add_argument("--clip", default=0.2, type=str)
