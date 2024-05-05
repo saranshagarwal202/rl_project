@@ -176,7 +176,7 @@ class PPO():
         """Save trajectory after every n training steps to be used for reward function training."""
         t, i = 0, 0
         sampled_states = []
-        while t < self.checkpoint_t_len:
+        while t < self.checkpoint_t_len and i<len(T_lengths):
             # ensuring a minimum length of 50 for sub sampling when training reward function.
             if T_lengths[i]>=50:
                 discounts = torch.zeros(
@@ -214,8 +214,8 @@ if __name__ == "__main__":
     parser.add_argument("--learning-iterations", default=10, type=int)
     parser.add_argument("--lr", default=3e-4, type=float)
     parser.add_argument("--clip", default=0.2, type=str)
-    parser.add_argument("--checkpoint-n", default=5, type=int)
-    parser.add_argument("--checkpoint-t-len", default=1000, type=int)
+    parser.add_argument("--checkpoint-n", default=1, type=int)
+    parser.add_argument("--checkpoint-t-len", default=10000, type=int)
     parser.add_argument("--mode", default='train', type=str)
     parser.add_argument("--model-path", default="", type=str)
     args = parser.parse_args()

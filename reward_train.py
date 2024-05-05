@@ -156,6 +156,8 @@ class Data(torch.utils.data.Dataset):
 
         if data_type=='train':
             indices = np.random.choice(len(self.data), len(self.data), replace=False)
+            indices = indices[:min(len(indices), 6000)]
+            print(f"Using {len(indices)} for training +test")
             self.train_indices = indices[:int(len(self.data)*data_ratio)]
             self.test_indices = indices[int(len(self.data)*data_ratio):]
             self.data = [self.data[i] for i in self.train_indices]
