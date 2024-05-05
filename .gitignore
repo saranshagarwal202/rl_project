@@ -172,3 +172,5 @@ ppo_actor.pth
 ppo_critic.pth
 PPO-for-Beginners/
 .DS_Store
+T-REX-IRL/
+evaluate.ipynb
