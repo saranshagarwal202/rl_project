@@ -155,14 +155,15 @@ class Data(torch.utils.data.Dataset):
         data.sort(key=lambda x: x[1])
 
         # make sets of 50 t lenin each state
-        self.data = torch.zeros((6000, T_len, self.state_dim))
-        self.data_rewards = torch.zeros((6000))
+        self.data = torch.zeros((6000//T_len, T_len, self.state_dim))
+        self.data_rewards = torch.zeros((6000//T_len, T_len))
         i = 0
         data_i = 0
         while i<self.data.shape[0]:
             #pick random set of 50 states from this T
-            self.data_rewards[i] = data[data_i][1]
+            
             idx = np.random.choice(max(len(data[data_i][0])-self.T_len, 1), 1)[0]
+            self.data_rewards[i] = torch.tensor(np.array(data[data_i][1][idx:idx+T_len], dtype=np.float32))
             self.data[i, :, :] = torch.tensor(np.array(data[data_i][0][idx:idx+T_len], dtype=np.float32))
             i+=1
             data_i+=1
@@ -183,7 +184,8 @@ class Data(torch.utils.data.Dataset):
             # self.data = [self.data[i] for i in test_indices]
             self.data = self.data[test_indices]
 
-
+        self.data = torch.reshape(self.data, (self.data.shape[0]*self.data.shape[1], self.data.shape[2]))
+        self.data_rewards = torch.reshape(self.data_rewards, (self.data_rewards.shape[0]*self.data_rewards.shape[1],))
         # rews = [d[1] for d in self.data]
         print(f"PPO mean reward: {self.data_rewards.mean()}")
         print(f"PPO max reward: {self.data_rewards.max()}")
@@ -211,15 +213,15 @@ class Data(torch.utils.data.Dataset):
         return self.indices1.shape[0]
 
     def __getitem__(self, index):
-        X1 = torch.zeros((self.T_len, self.state_dim, self.n_models))
-        X2 = torch.zeros((self.T_len, self.state_dim, self.n_models))
+        X1 = torch.zeros((self.state_dim, self.n_models))
+        X2 = torch.zeros((self.state_dim, self.n_models))
         for i in range(self.n_models):
             if self.data_rewards[self.indices1[index]][i]>self.data_rewards[self.indices2[index]][i]:
-                X1[:, :, i] = self.data[self.indices1[index][i]]
-                X2[:, :, i] = self.data[self.indices2[index][i]]
+                X1[:, i] = self.data[self.indices1[index][i]]
+                X2[:, i] = self.data[self.indices2[index][i]]
             else:
-                X1[:, :, i] = self.data[self.indices2[index][i]]
-                X2[:, :, i] = self.data[self.indices1[index][i]]
+                X1[:, i] = self.data[self.indices2[index][i]]
+                X2[:, i] = self.data[self.indices1[index][i]]
         
         return X1, X2
 
@@ -347,15 +349,15 @@ class Reward():
             test_losses = [0 for i in range(self.n_models)]
             for X1, X2 in self.train_dataloader:
 
-                X1 = torch.reshape(X1, (X1.shape[0]*X1.shape[1], X1.shape[2], X1.shape[3]))
-                X2 = torch.reshape(X2, (X2.shape[0]*X2.shape[1], X2.shape[2], X2.shape[3]))
+                # X1 = torch.reshape(X1, (X1.shape[0]*X1.shape[1], X1.shape[2], X1.shape[3]))
+                # X2 = torch.reshape(X2, (X2.shape[0]*X2.shape[1], X2.shape[2], X2.shape[3]))
                 # flipping Y with prob 0.1
                 # random_tensor = torch.rand(Y.size())
                 # mask = random_tensor < 0.01
                 # Y = torch.where(mask, 1 - Y, Y)
                 
                 # reshape X and Y
-                curr_batch_size = X1.shape[0]
+                # curr_batch_size = X1.shape[0]
 
                 # X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
                 # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
@@ -400,15 +402,15 @@ class Reward():
                 
                 # reshape X and Y
                 # curr_batch_size = X1.shape[0]
-                X1 = torch.reshape(X1, (X1.shape[0]*X1.shape[1], X1.shape[2], X1.shape[3]))
-                X2 = torch.reshape(X2, (X2.shape[0]*X2.shape[1], X2.shape[2], X2.shape[3]))
+                # X1 = torch.reshape(X1, (X1.shape[0]*X1.shape[1], X1.shape[2], X1.shape[3]))
+                # X2 = torch.reshape(X2, (X2.shape[0]*X2.shape[1], X2.shape[2], X2.shape[3]))
                 # flipping Y with prob 0.1
                 # random_tensor = torch.rand(Y.size())
                 # mask = random_tensor < 0.01
                 # Y = torch.where(mask, 1 - Y, Y)
                 
                 # reshape X and Y
-                curr_batch_size = X1.shape[0]
+                # curr_batch_size = X1.shape[0]
 
                 # X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
                 # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))

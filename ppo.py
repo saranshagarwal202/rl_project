@@ -179,15 +179,15 @@ class PPO():
         while t < self.checkpoint_t_len and i<len(T_lengths):
             # ensuring a minimum length of 50 for sub sampling when training reward function.
             if T_lengths[i]>=50:
-                discounts = torch.zeros(
-                T_lengths[i], device=self.device).fill_(self.discount)
-                discount_power = torch.linspace(
-                    start=0, end=T_lengths[i],
-                    steps=T_lengths[i], dtype=torch.int32, device=self.device)
-                discounts = discounts**discount_power
-                gt = discounts*rewards[i]
-                sampled_states.append([states[t:t+T_lengths[i]].tolist(), gt.sum().item()])
-                # sampled_states.append([states[t:t+T_lengths[i]].tolist(), rewards[i].sum().item()])
+                # discounts = torch.zeros(
+                # T_lengths[i], device=self.device).fill_(self.discount)
+                # discount_power = torch.linspace(
+                #     start=0, end=T_lengths[i],
+                #     steps=T_lengths[i], dtype=torch.int32, device=self.device)
+                # discounts = discounts**discount_power
+                # gt = discounts*rewards[i]
+                # sampled_states.append([states[t:t+T_lengths[i]].tolist(), gt.sum().item()])
+                sampled_states.append([states[t:t+T_lengths[i]].tolist(), rewards[i].tolist()])
             t += T_lengths[i]
             i += 1
 
@@ -214,8 +214,8 @@ if __name__ == "__main__":
     parser.add_argument("--learning-iterations", default=10, type=int)
     parser.add_argument("--lr", default=3e-4, type=float)
     parser.add_argument("--clip", default=0.2, type=str)
-    parser.add_argument("--checkpoint-n", default=1, type=int)
-    parser.add_argument("--checkpoint-t-len", default=10000, type=int)
+    parser.add_argument("--checkpoint-n", default=5, type=int)
+    parser.add_argument("--checkpoint-t-len", default=1000, type=int)
     parser.add_argument("--mode", default='train', type=str)
     parser.add_argument("--model-path", default="", type=str)
     args = parser.parse_args()
