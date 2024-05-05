@@ -136,23 +136,40 @@ class Data(torch.utils.data.Dataset):
             n_models: number of parallel reward models being trained.
         """
         super(Data).__init__()
-        self.data = []
+        data = []
         self.T_len = T_len
         self.n_models = n_models
         data_dir = f"data/{env}/states_bank"
         for file in sorted(os.listdir(data_dir)):
             f = open(os.path.join(data_dir, file), 'r')
-            self.data.extend(loads(f.read()))
+            data.extend(loads(f.read()))
             f.close()
 
-        self.state_dim = len(self.data[0][0][0])
+        self.state_dim = len(data[0][0][0])
         
         # select data based upon stage and print its best and mean reward
         if stage<3:
-            items = (len(self.data)//3)*stage
-            self.data = self.data[:items]
+            items = (len(data)//3)*stage
+            data = data[:items]
         # sorting data to rank from worst to best
-        self.data.sort(key=lambda x: x[1])
+        data.sort(key=lambda x: x[1])
+
+        # make sets of 50 t lenin each state
+        self.data = torch.zeros((6000, T_len, self.state_dim))
+        self.data_rewards = torch.zeros((6000))
+        i = 0
+        data_i = 0
+        while i<self.data.shape[0]:
+            #pick random set of 50 states from this T
+            self.data_rewards[i] = data[data_i][1]
+            idx = np.random.choice(max(len(data[data_i][0])-self.T_len, 1), 1)[0]
+            self.data[i, :, :] = torch.tensor(np.array(data[data_i][0][idx:idx+T_len], dtype=np.float32))
+            i+=1
+            data_i+=1
+            if data_i==len(data):
+                data_i=0
+
+        del data
 
         if data_type=='train':
             indices = np.random.choice(len(self.data), len(self.data), replace=False)
@@ -160,64 +177,81 @@ class Data(torch.utils.data.Dataset):
             print(f"Using {len(indices)} for training +test")
             self.train_indices = indices[:int(len(self.data)*data_ratio)]
             self.test_indices = indices[int(len(self.data)*data_ratio):]
-            self.data = [self.data[i] for i in self.train_indices]
+            # self.data = [self.data[i] for i in self.train_indices]
+            self.data = self.data[self.train_indices]
         else:
-            self.data = [self.data[i] for i in test_indices]
+            # self.data = [self.data[i] for i in test_indices]
+            self.data = self.data[test_indices]
 
 
-        rews = [d[1] for d in self.data]
-        print(f"PPO mean reward: {np.mean(rews)}")
-        print(f"PPO max reward: {np.max(rews)}")
+        # rews = [d[1] for d in self.data]
+        print(f"PPO mean reward: {self.data_rewards.mean()}")
+        print(f"PPO max reward: {self.data_rewards.max()}")
 
         # creating index pairs on which each model will train
         # prob of sampling lower trajectories is less compared to trajectories generated later in training with better ppo models
-        indices1 = np.random.choice(len(self.data), size=(
+        self.indices1 = np.random.choice(len(self.data), size=(
             len(self.data), n_models), replace=True)
-        indices2 = np.random.choice(len(self.data), size=(
+        self.indices2 = np.random.choice(len(self.data), size=(
             len(self.data), n_models), replace=True)
 
         # check to insure same trajectory is not paired together
         check = True
         while check:
-            common_pairs = (indices1 == indices2).any(axis=1).nonzero()
+            common_pairs = (self.indices1 == self.indices2).any(axis=1).nonzero()
             for idx in common_pairs[0]:
-                indices1[idx, :] = np.random.choice(
+                self.indices1[idx, :] = np.random.choice(
                     len(self.data), size=n_models)
-            check = (indices1 == indices2).any()
+            check = (self.indices1 == self.indices2).any()
 
         # indices shape = (2, len(data), 5)
-        self.indices = torch.tensor([indices1, indices2], dtype=torch.int32)
+        # self.indices = torch.tensor([indices1, indices2], dtype=torch.int32)
 
     def __len__(self):
-        return self.indices.shape[1]
+        return self.indices1.shape[0]
 
     def __getitem__(self, index):
-        X = torch.zeros(size=(2, self.T_len, self.n_models, self.state_dim))
-        # these index slices represent training pairs for each of n_model (default 5) reward networks
-        index_slice_1 = self.indices[0, index, :]
-        index_slice_2 = self.indices[1, index, :]
+        X1 = torch.zeros((self.T_len, self.state_dim, self.n_models))
+        X2 = torch.zeros((self.T_len, self.state_dim, self.n_models))
         for i in range(self.n_models):
-            T1 = self.data[index_slice_1[i]]
-            T2 = self.data[index_slice_2[i]]
-
-            # choosing random slice of 50 states
-            # 0th index is traj with greater reward always
-            if T1[1]>T2[1]:
-                idx1 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
-                idx2 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
-                X[0, :, i, :] = torch.tensor(
-                    np.array(T1[0][idx1: idx1+self.T_len], dtype=np.float32))
-                X[1, :, i, :] = torch.tensor(
-                    np.array(T2[0][idx2: idx2+self.T_len], dtype=np.float32))
+            if self.data_rewards[self.indices1[index]][i]>self.data_rewards[self.indices2[index]][i]:
+                X1[:, :, i] = self.data[self.indices1[index][i]]
+                X2[:, :, i] = self.data[self.indices2[index][i]]
             else:
-                idx1 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
-                idx2 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
-                X[0, :, i, :] = torch.tensor(
-                    np.array(T2[0][idx1: idx1+self.T_len], dtype=np.float32))
-                X[1, :, i, :] = torch.tensor(
-                    np.array(T1[0][idx2: idx2+self.T_len], dtype=np.float32))
+                X1[:, :, i] = self.data[self.indices2[index][i]]
+                X2[:, :, i] = self.data[self.indices1[index][i]]
+        
+        return X1, X2
 
-        return X
+
+
+    # def __getitem__(self, index):
+    #     X = torch.zeros(size=(2, self.T_len, self.n_models, self.state_dim))
+    #     # these index slices represent training pairs for each of n_model (default 5) reward networks
+    #     index_slice_1 = self.indices[0, index, :]
+    #     index_slice_2 = self.indices[1, index, :]
+    #     for i in range(self.n_models):
+    #         T1 = self.data[index_slice_1[i]]
+    #         T2 = self.data[index_slice_2[i]]
+
+    #         # choosing random slice of 50 states
+    #         # 0th index is traj with greater reward always
+    #         if T1[1]>T2[1]:
+    #             idx1 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
+    #             idx2 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
+    #             X[0, :, i, :] = torch.tensor(
+    #                 np.array(T1[0][idx1: idx1+self.T_len], dtype=np.float32))
+    #             X[1, :, i, :] = torch.tensor(
+    #                 np.array(T2[0][idx2: idx2+self.T_len], dtype=np.float32))
+    #         else:
+    #             idx1 = np.random.choice(max(len(T2[0])-self.T_len, 1), 1)[0]
+    #             idx2 = np.random.choice(max(len(T1[0])-self.T_len, 1), 1)[0]
+    #             X[0, :, i, :] = torch.tensor(
+    #                 np.array(T2[0][idx1: idx1+self.T_len], dtype=np.float32))
+    #             X[1, :, i, :] = torch.tensor(
+    #                 np.array(T1[0][idx2: idx2+self.T_len], dtype=np.float32))
+
+    #     return X
 
     def reset_index(self):
         """reset indices"""
@@ -267,12 +301,16 @@ class Reward():
             # train data
             self.train_data = Data(env, stage=stage, n_models=n_models, T_len=T_len)
             self.train_dataloader = torch.utils.data.DataLoader(
-                self.train_data, batch_size=batch_size, shuffle=True)
+                self.train_data, batch_size=batch_size, shuffle=True,
+                num_workers=os.cpu_count()-1, persistent_workers=True,
+                prefetch_factor=7)
             
             # test data
             self.test_data = Data(env, stage=stage, data_ratio=0.2, data_type='test', test_indices=self.train_data.test_indices, n_models=n_models, T_len=T_len)
             self.test_dataloader = torch.utils.data.DataLoader(
-                self.test_data, batch_size=batch_size, shuffle=True)
+                self.test_data, batch_size=batch_size, shuffle=True,
+                num_workers=os.cpu_count()-1, persistent_workers=True,
+                prefetch_factor=7)
             
 
             self.loss_fn = nn.BCEWithLogitsLoss()
@@ -307,17 +345,19 @@ class Reward():
         for epochs in range(self.n_iter):
             train_losses = [0 for i in range(self.n_models)]
             test_losses = [0 for i in range(self.n_models)]
-            for X in self.train_dataloader:
+            for X1, X2 in self.train_dataloader:
 
+                X1 = torch.reshape(X1, (X1.shape[0]*X1.shape[1], X1.shape[2], X1.shape[3]))
+                X2 = torch.reshape(X2, (X2.shape[0]*X2.shape[1], X2.shape[2], X2.shape[3]))
                 # flipping Y with prob 0.1
                 # random_tensor = torch.rand(Y.size())
                 # mask = random_tensor < 0.01
                 # Y = torch.where(mask, 1 - Y, Y)
                 
                 # reshape X and Y
-                curr_batch_size = X.shape[0]
+                curr_batch_size = X1.shape[0]
 
-                X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
+                # X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
                 # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
                 # preds = torch.zeros(Y.shape)
                 
@@ -325,11 +365,12 @@ class Reward():
                 for i, model in enumerate(self.reward_model):
                     model.train()
                     # preds = torch.zeros((Y.shape[0], 1), device=self.device)
-                    preds = model(X[:, i, :].squeeze().to(self.device))
-                    self.reward_model_std_params[f'reward_model_{i}']['min'] = min(self.reward_model_std_params[f'reward_model_{i}']['min'], preds.min().item())
-                    self.reward_model_std_params[f'reward_model_{i}']['max'] = max(self.reward_model_std_params[f'reward_model_{i}']['max'], preds.max().item())
-                    preds = preds.reshape(curr_batch_size, 2, self.T_len)
-                    preds = preds.mean(axis=2)
+                    preds1 = model(X1[:, :, i].squeeze().to(self.device))
+                    preds2 = model(X2[:, :, i].squeeze().to(self.device))
+                    self.reward_model_std_params[f'reward_model_{i}']['min'] = min(self.reward_model_std_params[f'reward_model_{i}']['min'], preds1.min().item())
+                    self.reward_model_std_params[f'reward_model_{i}']['max'] = max(self.reward_model_std_params[f'reward_model_{i}']['max'], preds1.max().item())
+                    # preds = preds.reshape(curr_batch_size, self.T_len)
+                    # preds = preds.mean(axis=2)
 
                     # preds = preds.sum(axis=1)
                     # y = torch.zeros((preds.shape[0], 2))
@@ -339,10 +380,10 @@ class Reward():
                     # loss = self.loss_fn(preds, y.to(self.device)) # add loss here
                     # To do: recheck loss calculation formula
                     # y = Y[:, i].to(self.device, dtype=torch.int32)
-                    Tj = torch.exp(preds[:, 0]) # higher reward
-                    Ti = torch.exp(preds[:, 1]) # lower reward
+                    # Tj = torch.exp(preds[:, 0]) # higher reward
+                    # Ti = torch.exp(preds[:, 1]) # lower reward
                     # check to see loss does not go nan
-                    loss = -(torch.log(Tj/(Tj+Ti)).mean())
+                    loss = -(torch.log(torch.exp(preds1)/(torch.exp(preds1)+torch.exp(preds2))).mean())
                     l2_reg = 0.001*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
                     loss = loss+l2_reg
                     self.optimizers[i].zero_grad()
@@ -350,7 +391,7 @@ class Reward():
                     self.optimizers[i].step()
                     train_losses[i]+= loss.item()
             
-            for X in self.test_dataloader:
+            for X1, X2 in self.test_dataloader:
 
                 # flipping Y with prob 0.1
                 # random_tensor = torch.rand(Y.size())
@@ -358,9 +399,18 @@ class Reward():
                 # Y = torch.where(mask, 1 - Y, Y)
                 
                 # reshape X and Y
-                curr_batch_size = X.shape[0]
+                # curr_batch_size = X1.shape[0]
+                X1 = torch.reshape(X1, (X1.shape[0]*X1.shape[1], X1.shape[2], X1.shape[3]))
+                X2 = torch.reshape(X2, (X2.shape[0]*X2.shape[1], X2.shape[2], X2.shape[3]))
+                # flipping Y with prob 0.1
+                # random_tensor = torch.rand(Y.size())
+                # mask = random_tensor < 0.01
+                # Y = torch.where(mask, 1 - Y, Y)
+                
+                # reshape X and Y
+                curr_batch_size = X1.shape[0]
 
-                X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
+                # X = torch.reshape(X, (X.shape[0]*2*X.shape[2], X.shape[3], X.shape[4]))
                 # Y = torch.reshape(Y, (Y.shape[0]*2, Y.shape[2]))
                 # preds = torch.zeros(Y.shape)
                 
@@ -368,11 +418,12 @@ class Reward():
                 for i, model in enumerate(self.reward_model):
                     model.eval()
                     # preds = torch.zeros((Y.shape[0], 1), device=self.device)
-                    preds = model(X[:, i, :].squeeze().to(self.device))
-                    self.reward_model_std_params[f'reward_model_{i}']['min'] = min(self.reward_model_std_params[f'reward_model_{i}']['min'], preds.min().item())
-                    self.reward_model_std_params[f'reward_model_{i}']['max'] = max(self.reward_model_std_params[f'reward_model_{i}']['max'], preds.max().item())
-                    preds = preds.reshape(curr_batch_size, 2, self.T_len)
-                    preds = preds.mean(axis=2)
+                    preds1 = model(X1[:, :, i].squeeze().to(self.device))
+                    preds2 = model(X2[:, :, i].squeeze().to(self.device))
+                    self.reward_model_std_params[f'reward_model_{i}']['min'] = min(self.reward_model_std_params[f'reward_model_{i}']['min'], preds1.min().item())
+                    self.reward_model_std_params[f'reward_model_{i}']['max'] = max(self.reward_model_std_params[f'reward_model_{i}']['max'], preds1.max().item())
+                    # preds = preds.reshape(curr_batch_size, self.T_len)
+                    # preds = preds.mean(axis=2)
 
                     # preds = preds.sum(axis=1)
                     # y = torch.zeros((preds.shape[0], 2))
@@ -382,10 +433,12 @@ class Reward():
                     # loss = self.loss_fn(preds, y.to(self.device)) # add loss here
                     # To do: recheck loss calculation formula
                     # y = Y[:, i].to(self.device, dtype=torch.int32)
-                    Tj = torch.exp(preds[:, 0]) # higher reward
-                    Ti = torch.exp(preds[:, 1]) # lower reward
+                    # Tj = torch.exp(preds[:, 0]) # higher reward
+                    # Ti = torch.exp(preds[:, 1]) # lower reward
                     # check to see loss does not go nan
-                    loss = -(torch.log(Tj/(Tj+Ti)).mean())
+                    loss = -(torch.log(torch.exp(preds1)/(torch.exp(preds1)+torch.exp(preds2))).mean())
+                    l2_reg = 0.001*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
+                    loss = loss+l2_reg
                     test_losses[i]+= loss.item()
 
 
