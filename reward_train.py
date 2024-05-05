@@ -157,8 +157,8 @@ class Data(torch.utils.data.Dataset):
         data_low = data[:len(data)//2]
 
         # make sets of 50 t lenin each state
-        self.data_high = torch.zeros((3000, T_len, self.state_dim))
-        self.data_high_rewards = torch.zeros((3000))
+        self.data_high = torch.zeros((4000, T_len, self.state_dim))
+        self.data_high_rewards = torch.zeros((4000))
         i = 0
         data_i = 0
         while i<self.data_high.shape[0]:
@@ -174,8 +174,8 @@ class Data(torch.utils.data.Dataset):
         del data_high
 
         # make sets of 50 t lenin each state
-        self.data_low = torch.zeros((3000, T_len, self.state_dim))
-        self.data_low_rewards = torch.zeros((3000))
+        self.data_low = torch.zeros((4000, T_len, self.state_dim))
+        self.data_low_rewards = torch.zeros((4000))
         i = 0
         data_i = 0
         while i<self.data_low.shape[0]:
@@ -421,7 +421,7 @@ class Reward():
                     # Ti = torch.exp(preds[:, 1]) # lower reward
                     # check to see loss does not go nan
                     loss = -(torch.log(torch.exp(preds1)/(torch.exp(preds1)+torch.exp(preds2))).mean())
-                    l2_reg = 0.001*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
+                    l2_reg = 0.01*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
                     loss = loss+l2_reg
                     self.optimizers[i].zero_grad()
                     loss.backward()
@@ -477,8 +477,8 @@ class Reward():
                     # Ti = torch.exp(preds[:, 1]) # lower reward
                     # check to see loss does not go nan
                     loss = -(torch.log(torch.exp(preds1)/(torch.exp(preds1)+torch.exp(preds2))).mean())
-                    l2_reg = 0.001*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
-                    loss = loss+l2_reg
+                    # l2_reg = 0.001*sum(param.norm()**2 for param in model.parameters() if param.requires_grad)
+                    loss = loss #+l2_reg
                     test_losses[i]+= loss.item()
 
 
@@ -487,8 +487,8 @@ class Reward():
             self.history.append((train_losses, test_losses))
             pbar.set_postfix_str(f"train: {train_losses}, test: {test_losses}") 
             pbar.update()
-            if epochs%10==0:
-                self.save_checkpoint(test_losses)
+            #if epochs%10==0:
+            self.save_checkpoint(test_losses)
             
             # self.train_data.reset_index()
         pbar.close()

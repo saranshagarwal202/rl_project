@@ -193,11 +193,11 @@ class PPO():
 
         if len(sampled_states)>0:
             try:
-                f = open(f"data/{self.env.spec.id}/states_bank/states_{curr_t.item()}.json", 'w')
+                f = open(f"data/{self.env.spec.id}/states_bank/states_{curr_t}.json", 'w')
                 
             except FileNotFoundError:
-                os.mkdir(f"data/{self.env.spec.id}/states_bank")
-                f = open(f"data/{self.env.spec.id}/states_bank/states_{curr_t.item()}.json", 'w')
+                os.mkdir(f"data/{self.env.spec.id}/states_bank/")
+                f = open(f"data/{self.env.spec.id}/states_bank/states_{curr_t}.json", 'w')
 
             f.write(json.dumps(sampled_states))
             f.close()
@@ -205,7 +205,7 @@ class PPO():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", default='Hopper-v4')
+    parser.add_argument("--env", default='HalfCheetah')
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--time-steps-per-batch", default=4096, type=int)
     parser.add_argument("--time-steps-per-trajectory", default=1024, type=int)
@@ -227,6 +227,8 @@ if __name__ == "__main__":
             import shutil
             shutil.rmtree(f"data/{env.spec.id}/")
             del shutil
+        else:
+            os.mkdir(f"data/{env.spec.id}/")
 
         # Setting seeds
         torch.manual_seed(args.seed)
