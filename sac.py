@@ -269,6 +269,7 @@ if __name__ == "__main__":
                         help='size of replay buffer (default: 10000000)')
     parser.add_argument('--cuda', action="store_true",
                         help='run on CUDA (default: False)')
+    parser.add_argument('--mode', default='test', type=str)
     args = parser.parse_args()
 
     # Environment
@@ -277,7 +278,10 @@ if __name__ == "__main__":
     env.action_space.seed(args.seed)
 
     agent = SAC(env.observation_space.shape[0], env.action_space, args)
-    agent.learn()
+    if args.mode=="train":
+        agent.learn()
+    else:
+        agent.policy.load_state_dict(torch.load("SAC_data/Hopper_policy.pt"))
 
     #test final model
     env = gym.make(args.env_name, render_mode="human")

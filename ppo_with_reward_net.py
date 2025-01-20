@@ -142,7 +142,7 @@ class PPO():
                 self.value_optim.step()
             # print(f"Curr Mean Reward: {mean_reward}")
             pbar.set_postfix_str(
-                f"Mean reward: {round(mean_reward, 3)}, Mean Gt:{Gt.mean()/T_lengths.shape[0]}, Avg Episodic Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}")
+                f"Mean reward: {round(mean_reward, 3)}, Mean Gt:{round((Gt.mean()/T_lengths.shape[0]).item(), 2)}, Avg E Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}")
             pbar.update(n=int(T_lengths.sum()))
             prev_mean_reward = mean_reward
         pbar.close()
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
     if args.mode == 'train':
         # Making the environment
-        env = gym.make(args.env)
+        env = gym.make(args.env, healthy_reward=0)
         if os.path.exists(f"data/{env.spec.id}/ppo_with_reward_fn/"):
             import shutil
             shutil.rmtree(f"data/{env.spec.id}/ppo_with_reward_fn/")
