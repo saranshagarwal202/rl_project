@@ -77,7 +77,8 @@ class PPO():
 
             states.extend(ep_states)
             traj_length.append(episode_t+1)
-            rewards.append(self.reward_net.get_reward(torch.tensor(ep_states, dtype = torch.float32, device=self.acc_device)))
+            t_r = self.reward_net.get_reward(torch.tensor(ep_states, dtype = torch.float32, device=self.acc_device))*0.1
+            rewards.append(t_r+torch.tensor(ep_rewards, dtype=torch.float32).unsqueeze(1))
             mean_rewards.append(sum(ep_rewards))
         return torch.tensor(np.array(states, dtype=np.float32), dtype=torch.float32), torch.tensor(np.array(actions)), torch.tensor(np.array(log_probabilities, dtype=np.float32)), rewards, torch.tensor(np.array(traj_length, dtype=np.int32)), sum(mean_rewards)/len(mean_rewards)
 
@@ -101,6 +102,7 @@ class PPO():
                 pos += 1
 
         return Gt-V.detach(), Gt
+        
 
     def learn(self):
         t = 0
@@ -140,7 +142,7 @@ class PPO():
                 self.value_optim.step()
             # print(f"Curr Mean Reward: {mean_reward}")
             pbar.set_postfix_str(
-                f"Mean reward: {round(mean_reward, 3)}, Avg Episodic Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}")
+                f"Mean reward: {round(mean_reward, 3)}, Mean Gt:{round((Gt.mean()/T_lengths.shape[0]).item(), 2)}, Avg E Length: {round((T_lengths.sum()/T_lengths.shape[0]).item())}")
             pbar.update(n=int(T_lengths.sum()))
             prev_mean_reward = mean_reward
         pbar.close()
@@ -176,7 +178,7 @@ if __name__ == "__main__":
     parser.add_argument("--time-steps-per-batch", default=4096, type=int)
     parser.add_argument("--time-steps-per-trajectory", default=400, type=int)
     parser.add_argument("--discount", default=0.99)
-    parser.add_argument("--total-timesteps", default=600_000, type=int)
+    parser.add_argument("--total-timesteps", default=500_000, type=int)
     parser.add_argument("--learning-iterations", default=10, type=int)
     parser.add_argument("--lr", default=3e-4, type=float)
     parser.add_argument("--clip", default=0.2, type=str)
@@ -188,7 +190,7 @@ if __name__ == "__main__":
 
     if args.mode == 'train':
         # Making the environment
-        env = gym.make(args.env)
+        env = gym.make(args.env, healthy_reward=0)
         if os.path.exists(f"data/{env.spec.id}/ppo_with_reward_fn/"):
             import shutil
             shutil.rmtree(f"data/{env.spec.id}/ppo_with_reward_fn/")
